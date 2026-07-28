@@ -8,6 +8,7 @@ const HEIGHT_AMPLITUDE = 20;
 const DETAIL_AMPLITUDE = 4;
 const SURFACE_LAYER_DEPTH = 3; // blocks of dirt beneath the top block
 const CAVE_THRESHOLD = 0.62; // higher = rarer caves
+const SNOW_LINE = 64; // surface at/above this height caps with snow
 
 /** Deterministic PRNG from a numeric seed, used to seed the noise functions. */
 function mulberry32(seed: number): () => number {
@@ -49,7 +50,12 @@ export class TerrainGenerator {
         const worldX = chunk.worldOriginX + x;
         const worldZ = chunk.worldOriginZ + z;
         const surfaceY = Math.min(this.surfaceHeightAt(worldX, worldZ), CHUNK_SIZE_Y - 1);
-        const topBlock = surfaceY <= SEA_LEVEL + 1 ? BlockType.Sand : BlockType.Grass;
+        const topBlock =
+          surfaceY >= SNOW_LINE
+            ? BlockType.Snow
+            : surfaceY <= SEA_LEVEL + 1
+              ? BlockType.Sand
+              : BlockType.Grass;
 
         for (let y = 0; y <= surfaceY; y++) {
           let block: BlockType;
