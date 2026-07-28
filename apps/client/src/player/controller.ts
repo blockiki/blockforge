@@ -85,6 +85,12 @@ export class FirstPersonController {
     this.camera.rotation.x = this.pitch;
   }
 
+  // Only ever checks the handful of blocks the player's AABB actually
+  // overlaps (at most a few per axis), and each World.getBlock call is
+  // O(1) — a chunk-coord hash lookup plus a flat-array index. That's the
+  // "청크 단위 공간 분할" the spec asks for; a full octree would add
+  // tree-descent overhead without reducing this further, since the grid
+  // is already uniform and small per query.
   private collidesAt(x: number, y: number, z: number): boolean {
     const minX = Math.floor(x - HALF_WIDTH);
     const maxX = Math.floor(x + HALF_WIDTH - 1e-6);
