@@ -18,6 +18,12 @@ export class Chunk {
    * of the full height, skipping the empty sky above every column.
    */
   highestSolidY = 0;
+  /**
+   * Player-made changes since generation, keyed by "lx,ly,lz". Terrain
+   * itself is a pure function of the seed and never needs saving — only
+   * this diff does, which is what gets persisted to IndexedDB.
+   */
+  edits: Record<string, number> = {};
 
   constructor(cx: number, cz: number) {
     this.cx = cx;

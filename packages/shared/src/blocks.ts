@@ -10,6 +10,7 @@ export const BlockType = {
   Grass: 3,
   Wood: 4,
   Sand: 5,
+  Snow: 6,
 } as const;
 
 export type BlockType = (typeof BlockType)[keyof typeof BlockType];
@@ -22,6 +23,7 @@ export const BLOCK_COLORS: Record<BlockType, number> = {
   [BlockType.Grass]: 0x4caf50,
   [BlockType.Wood]: 0x6d4c25,
   [BlockType.Sand]: 0xe0c882,
+  [BlockType.Snow]: 0xf0f5f7,
 };
 
 export function isSolidBlock(block: BlockType): boolean {

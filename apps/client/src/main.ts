@@ -7,9 +7,10 @@ import { Hotbar } from "./ui/hotbar";
 import { DayNightCycle } from "./time/dayNightCycle";
 
 const WORLD_SEED = 1337;
-// Fixed-size world for Phase 1 (7x7 chunks); dynamic chunk streaming as the
-// player roams is Phase 2.
-const WORLD_RADIUS_CHUNKS = 3;
+// Chunks within this radius of spawn load synchronously so the player
+// never spawns into an empty void; everything beyond streams in
+// progressively as World.update() runs each frame.
+const SPAWN_WARMUP_RADIUS_CHUNKS = 2;
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x87ceeb, 20, 120);
@@ -21,7 +22,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const world = new World(WORLD_SEED);
-world.generateFixedArea(WORLD_RADIUS_CHUNKS);
+world.loadAreaSync(0, 0, SPAWN_WARMUP_RADIUS_CHUNKS);
 scene.add(world.group);
 
 const dayNight = new DayNightCycle(scene);
@@ -66,6 +67,7 @@ renderer.setAnimationLoop(() => {
   // huge physics step (e.g. falling through the world).
   const dt = Math.min(clock.getDelta(), 0.1);
   controller.update(dt);
+  world.update(controller.position.x, controller.position.z);
   blockEditor.update();
   dayNight.update(dt, scene);
   renderer.render(scene, camera);
