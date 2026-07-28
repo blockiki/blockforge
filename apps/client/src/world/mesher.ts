@@ -1,23 +1,32 @@
 import * as THREE from "three";
-import { BLOCK_COLORS, CHUNK_SIZE_X, CHUNK_SIZE_Z, isSolidBlock } from "@blockforge/shared";
+import { type BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Z, isSolidBlock } from "@blockforge/shared";
 import type { Chunk } from "./chunk";
 import type { World } from "./world";
+import type { TileUV } from "./textureAtlas";
 
 interface FaceDef {
   normal: readonly [number, number, number];
   corners: readonly (readonly [number, number, number])[];
+  /** Fake directional shading (no per-face lighting calc needed): top
+   * brighter, bottom darker, sides in between — reads as subtle ambient
+   * occlusion even under flat light. */
+  shade: number;
 }
 
 // Unit-cube face vertices, wound CCW as seen from outside (along `normal`)
 // so Three.js's default front-face culling keeps them visible.
 const FACES: readonly FaceDef[] = [
-  { normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
-  { normal: [-1, 0, 0], corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]] },
-  { normal: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]] },
-  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]] },
-  { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
-  { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]] },
+  { normal: [1, 0, 0], corners: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], shade: 0.8 },
+  { normal: [-1, 0, 0], corners: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]], shade: 0.8 },
+  { normal: [0, 1, 0], corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]], shade: 1.0 },
+  { normal: [0, -1, 0], corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]], shade: 0.55 },
+  { normal: [0, 0, 1], corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], shade: 0.8 },
+  { normal: [0, 0, -1], corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], shade: 0.8 },
 ];
+
+// Canonical UV corners in the same winding order as FACES[i].corners, so
+// corner index N always maps to the same tile corner regardless of face.
+const CORNER_UVS: readonly (readonly [number, number])[] = [[0, 0], [1, 0], [1, 1], [0, 1]];
 
 /**
  * Builds one merged BufferGeometry per chunk using face culling: a face
@@ -27,10 +36,13 @@ const FACES: readonly FaceDef[] = [
  * triangle count further but isn't needed at this world size yet.
  */
 export class ChunkMesher {
+  constructor(private readonly getTileUV: (block: BlockType) => TileUV) {}
+
   build(chunk: Chunk, world: World): THREE.BufferGeometry | null {
     const positions: number[] = [];
     const normals: number[] = [];
     const colors: number[] = [];
+    const uvs: number[] = [];
     const indices: number[] = [];
 
     const originX = chunk.worldOriginX;
@@ -46,10 +58,7 @@ export class ChunkMesher {
 
           const worldX = originX + x;
           const worldZ = originZ + z;
-          const color = BLOCK_COLORS[block];
-          const r = ((color >> 16) & 0xff) / 255;
-          const g = ((color >> 8) & 0xff) / 255;
-          const b = (color & 0xff) / 255;
+          const tile = this.getTileUV(block);
 
           for (const face of FACES) {
             const neighbor = world.getBlock(
@@ -60,10 +69,13 @@ export class ChunkMesher {
             if (isSolidBlock(neighbor)) continue;
 
             const startIndex = positions.length / 3;
-            for (const corner of face.corners) {
+            for (let ci = 0; ci < 4; ci++) {
+              const corner = face.corners[ci];
               positions.push(x + corner[0], y + corner[1], z + corner[2]);
               normals.push(face.normal[0], face.normal[1], face.normal[2]);
-              colors.push(r, g, b);
+              colors.push(face.shade, face.shade, face.shade);
+              const [cu, cv] = CORNER_UVS[ci];
+              uvs.push(tile.u0 + cu * (tile.u1 - tile.u0), tile.v0 + cv * (tile.v1 - tile.v0));
             }
             indices.push(
               startIndex,
@@ -84,6 +96,7 @@ export class ChunkMesher {
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
     geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setIndex(indices);
     return geometry;
   }
