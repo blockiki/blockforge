@@ -20,9 +20,6 @@ importers:
       '@blockforge/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      simplex-noise:
-        specifier: ^4.0.3
-        version: 4.0.3
       three:
         specifier: ^0.185.1
         version: 0.185.1
@@ -60,6 +57,10 @@ importers:
         version: 7.0.2
 
   packages/shared:
+    dependencies:
+      simplex-noise:
+        specifier: ^4.0.3
+        version: 4.0.3
     devDependencies:
       typescript:
         specifier: ^7.0.2

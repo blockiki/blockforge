@@ -1,10 +1,7 @@
 import * as THREE from "three";
-import { BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z } from "@blockforge/shared";
-import { Chunk, chunkKey } from "./chunk";
-import { TerrainGenerator } from "./terrain";
+import { BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z, ChunkData, TerrainGenerator, chunkKey } from "@blockforge/shared";
 import { ChunkMesher } from "./mesher";
 import { buildTextureAtlas } from "./textureAtlas";
-import { loadChunkEdits, saveChunkEdits } from "../persistence/worldStorage";
 
 // How far around the player chunks stay loaded/meshed. Unload uses a
 // slightly larger radius than load (hysteresis) so a player oscillating
@@ -26,16 +23,24 @@ interface QueuedChunk {
   cz: number;
 }
 
+interface ClientChunk {
+  data: ChunkData;
+  mesh: THREE.Mesh | null;
+}
+
 /**
- * Streams chunks in/out around the player instead of generating a fixed
- * area once (Phase 1). Chunk lookups stay O(1) throughout: a hash map
+ * Streams chunks in/out around the player. Terrain itself is generated
+ * locally from the shared, seeded TerrainGenerator (deterministic, so
+ * client and server always agree without sending block data over the
+ * network) — only the player-made edit diff comes from the server, via
+ * `onChunkLoaded` + `applyChunkEdits` (wired up in main.ts alongside the
+ * WebSocket connection). Chunk lookups stay O(1) throughout: a hash map
  * from chunk coords to a flat per-chunk block array, so both world
  * queries and collision checks never scan more than the handful of
- * blocks they actually need — an octree would add tree-descent cost
- * without buying anything on top of that for a uniform voxel grid.
+ * blocks they actually need.
  */
 export class World {
-  private readonly chunks = new Map<string, Chunk>();
+  private readonly chunks = new Map<string, ClientChunk>();
   private readonly terrain: TerrainGenerator;
   private readonly mesher: ChunkMesher;
   private readonly material: THREE.Material;
@@ -45,7 +50,11 @@ export class World {
   private readonly queuedKeys = new Set<string>();
   private lastPlayerChunk: QueuedChunk | null = null;
 
-  constructor(private readonly seed: number) {
+  /** Fired right after a chunk is generated, so the caller can ask the
+   * server for that chunk's saved edit diff (see applyChunkEdits). */
+  onChunkLoaded: ((cx: number, cz: number) => void) | null = null;
+
+  constructor(seed: number) {
     this.terrain = new TerrainGenerator(seed);
     const atlas = buildTextureAtlas();
     this.mesher = new ChunkMesher(atlas.getTileUV);
@@ -56,40 +65,56 @@ export class World {
     return this.terrain.surfaceHeightAt(worldX, worldZ);
   }
 
-  getChunk(cx: number, cz: number): Chunk | undefined {
-    return this.chunks.get(chunkKey(cx, cz));
+  getChunkData(cx: number, cz: number): ChunkData | undefined {
+    return this.chunks.get(chunkKey(cx, cz))?.data;
   }
 
   getBlock(worldX: number, worldY: number, worldZ: number): BlockType {
     if (worldY < 0 || worldY >= CHUNK_SIZE_Y) return BlockType.Air;
     const cx = Math.floor(worldX / CHUNK_SIZE_X);
     const cz = Math.floor(worldZ / CHUNK_SIZE_Z);
-    const chunk = this.getChunk(cx, cz);
+    const chunk = this.getChunkData(cx, cz);
     if (!chunk) return BlockType.Air;
     return chunk.getBlock(worldX - cx * CHUNK_SIZE_X, worldY, worldZ - cz * CHUNK_SIZE_Z);
   }
 
+  /**
+   * Purely local mutation + remesh, no networking. Used both for the
+   * local player's optimistic edits (prediction) and for edits the
+   * server broadcasts from other players — the caller decides whether
+   * this also needs to be sent to the server.
+   */
   setBlock(worldX: number, worldY: number, worldZ: number, block: BlockType): void {
     if (worldY < 0 || worldY >= CHUNK_SIZE_Y) return;
     const cx = Math.floor(worldX / CHUNK_SIZE_X);
     const cz = Math.floor(worldZ / CHUNK_SIZE_Z);
-    const chunk = this.getChunk(cx, cz);
-    if (!chunk) return; // interaction reach is far smaller than the load radius
+    const entry = this.chunks.get(chunkKey(cx, cz));
+    if (!entry) return; // interaction reach is far smaller than the load radius
 
     const localX = worldX - cx * CHUNK_SIZE_X;
     const localZ = worldZ - cz * CHUNK_SIZE_Z;
-    chunk.setBlock(localX, worldY, localZ, block);
-    chunk.edits[localEditKey(localX, worldY, localZ)] = block;
-    saveChunkEdits(this.seed, cx, cz, chunk.edits).catch((err) => {
-      console.warn("[world] failed to save chunk edit", err);
-    });
-    this.rebuildChunkMesh(chunk);
+    entry.data.setBlock(localX, worldY, localZ, block);
+    entry.data.edits[localEditKey(localX, worldY, localZ)] = block;
+    this.rebuildChunkMesh(entry);
 
     // A block on a chunk border affects the neighbor's face culling too.
     if (localX === 0) this.rebuildNeighbor(cx - 1, cz);
     if (localX === CHUNK_SIZE_X - 1) this.rebuildNeighbor(cx + 1, cz);
     if (localZ === 0) this.rebuildNeighbor(cx, cz - 1);
     if (localZ === CHUNK_SIZE_Z - 1) this.rebuildNeighbor(cx, cz + 1);
+  }
+
+  /** Applies the server's saved edit diff for a chunk once the response arrives. */
+  applyChunkEdits(cx: number, cz: number, edits: Record<string, number>): void {
+    const entry = this.chunks.get(chunkKey(cx, cz));
+    if (!entry) return; // chunk may have unloaded again by the time this arrives
+    for (const [key, block] of Object.entries(edits)) {
+      const [lx, ly, lz] = key.split(",").map(Number);
+      entry.data.setBlock(lx, ly, lz, block as BlockType);
+    }
+    // Edits made in the brief window before this resolved take priority.
+    entry.data.edits = { ...edits, ...entry.data.edits };
+    this.rebuildChunkMesh(entry);
   }
 
   /** Synchronously loads a small area so the player never spawns into an empty void. */
@@ -141,11 +166,11 @@ export class World {
   }
 
   private unloadFarChunks(playerCX: number, playerCZ: number): void {
-    for (const [key, chunk] of this.chunks) {
-      const dx = chunk.cx - playerCX;
-      const dz = chunk.cz - playerCZ;
+    for (const [key, entry] of this.chunks) {
+      const dx = entry.data.cx - playerCX;
+      const dz = entry.data.cz - playerCZ;
       if (Math.max(Math.abs(dx), Math.abs(dz)) > UNLOAD_RADIUS_CHUNKS) {
-        this.disposeMesh(chunk);
+        this.disposeMesh(entry);
         this.chunks.delete(key);
       }
     }
@@ -155,45 +180,37 @@ export class World {
     const key = chunkKey(cx, cz);
     if (this.chunks.has(key)) return;
 
-    const chunk = new Chunk(cx, cz);
-    this.terrain.generate(chunk);
-    this.chunks.set(key, chunk);
-    this.rebuildChunkMesh(chunk);
+    const data = new ChunkData(cx, cz);
+    this.terrain.generate(data);
+    const entry: ClientChunk = { data, mesh: null };
+    this.chunks.set(key, entry);
+    this.rebuildChunkMesh(entry);
 
-    loadChunkEdits(this.seed, cx, cz).then((saved) => {
-      if (!saved || !this.chunks.has(key)) return; // chunk may have been unloaded by the time this resolves
-      for (const [localKey, block] of Object.entries(saved)) {
-        const [lx, ly, lz] = localKey.split(",").map(Number);
-        chunk.setBlock(lx, ly, lz, block as BlockType);
-      }
-      // Edits made in the brief window before this resolved take priority.
-      chunk.edits = { ...saved, ...chunk.edits };
-      this.rebuildChunkMesh(chunk);
-    });
+    this.onChunkLoaded?.(cx, cz);
   }
 
-  private disposeMesh(chunk: Chunk): void {
-    if (!chunk.mesh) return;
-    this.group.remove(chunk.mesh);
-    chunk.mesh.geometry.dispose();
-    chunk.mesh = null;
+  private disposeMesh(entry: ClientChunk): void {
+    if (!entry.mesh) return;
+    this.group.remove(entry.mesh);
+    entry.mesh.geometry.dispose();
+    entry.mesh = null;
   }
 
   private rebuildNeighbor(cx: number, cz: number): void {
-    const neighbor = this.getChunk(cx, cz);
+    const neighbor = this.chunks.get(chunkKey(cx, cz));
     if (neighbor) this.rebuildChunkMesh(neighbor);
   }
 
-  private rebuildChunkMesh(chunk: Chunk): void {
-    this.disposeMesh(chunk);
+  private rebuildChunkMesh(entry: ClientChunk): void {
+    this.disposeMesh(entry);
 
-    const geometry = this.mesher.build(chunk, this);
-    chunk.dirty = false;
+    const geometry = this.mesher.build(entry.data, this);
+    entry.data.dirty = false;
     if (!geometry) return;
 
     const mesh = new THREE.Mesh(geometry, this.material);
-    mesh.position.set(chunk.worldOriginX, 0, chunk.worldOriginZ);
-    chunk.mesh = mesh;
+    mesh.position.set(entry.data.worldOriginX, 0, entry.data.worldOriginZ);
+    entry.mesh = mesh;
     this.group.add(mesh);
   }
 }

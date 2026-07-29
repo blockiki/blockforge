@@ -1,16 +1,17 @@
-import { BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z } from "@blockforge/shared";
-import * as THREE from "three";
+import { BlockType } from "./blocks.js";
+import { CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z } from "./chunk.js";
 
 /**
- * A single chunk's block storage. A flat Uint8Array (instead of a 3D
+ * Pure block storage for one chunk — a flat Uint8Array (instead of a 3D
  * array of objects) keeps memory tight (~64KB/chunk at 16x256x16) and
  * gives cache-friendly linear access during meshing/terrain generation.
+ * Has no rendering dependency (no Three.js) so both the client and the
+ * server can generate and hold identical chunk data.
  */
-export class Chunk {
+export class ChunkData {
   readonly cx: number;
   readonly cz: number;
   readonly blocks: Uint8Array;
-  mesh: THREE.Mesh | null = null;
   dirty = true;
   /**
    * Highest Y with a non-air block. A chunk is 256 blocks tall but terrain
@@ -21,7 +22,7 @@ export class Chunk {
   /**
    * Player-made changes since generation, keyed by "lx,ly,lz". Terrain
    * itself is a pure function of the seed and never needs saving — only
-   * this diff does, which is what gets persisted to IndexedDB.
+   * this diff does, which is what the server persists.
    */
   edits: Record<string, number> = {};
 
@@ -40,13 +41,13 @@ export class Chunk {
   }
 
   getBlock(x: number, y: number, z: number): BlockType {
-    if (!Chunk.inBounds(x, y, z)) return BlockType.Air;
-    return this.blocks[Chunk.index(x, y, z)] as BlockType;
+    if (!ChunkData.inBounds(x, y, z)) return BlockType.Air;
+    return this.blocks[ChunkData.index(x, y, z)] as BlockType;
   }
 
   setBlock(x: number, y: number, z: number, block: BlockType): void {
-    if (!Chunk.inBounds(x, y, z)) return;
-    this.blocks[Chunk.index(x, y, z)] = block;
+    if (!ChunkData.inBounds(x, y, z)) return;
+    this.blocks[ChunkData.index(x, y, z)] = block;
     if (block !== BlockType.Air && y > this.highestSolidY) this.highestSolidY = y;
     this.dirty = true;
   }

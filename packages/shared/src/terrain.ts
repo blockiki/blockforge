@@ -1,6 +1,7 @@
 import { createNoise2D, createNoise3D, type NoiseFunction2D, type NoiseFunction3D } from "simplex-noise";
-import { BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z } from "@blockforge/shared";
-import { Chunk } from "./chunk";
+import { BlockType } from "./blocks.js";
+import { CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z } from "./chunk.js";
+import { ChunkData } from "./chunkData.js";
 
 const SEA_LEVEL = 40;
 const BASE_HEIGHT = 48;
@@ -24,7 +25,9 @@ function mulberry32(seed: number): () => number {
 /**
  * Seed-deterministic terrain: a fixed seed always regenerates the same
  * world, since height/cave shape is a pure function of world coordinates
- * and the seeded noise fields (no per-chunk randomness).
+ * and the seeded noise fields (no per-chunk randomness). Both the client
+ * (to render chunks without waiting on the network) and the server (to
+ * validate block edits) run this exact same generator.
  */
 export class TerrainGenerator {
   private readonly heightNoise: NoiseFunction2D;
@@ -44,7 +47,7 @@ export class TerrainGenerator {
     return Math.floor(BASE_HEIGHT + base + detail);
   }
 
-  generate(chunk: Chunk): void {
+  generate(chunk: ChunkData): void {
     for (let x = 0; x < CHUNK_SIZE_X; x++) {
       for (let z = 0; z < CHUNK_SIZE_Z; z++) {
         const worldX = chunk.worldOriginX + x;

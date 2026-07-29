@@ -55,6 +55,10 @@ export class FirstPersonController {
     return this.yaw;
   }
 
+  get lookPitch(): number {
+    return this.pitch;
+  }
+
   update(dt: number): void {
     const forward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, this.yaw, 0));
     const right = new THREE.Vector3(1, 0, 0).applyEuler(new THREE.Euler(0, this.yaw, 0));
