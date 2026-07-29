@@ -35,6 +35,12 @@ export class ServerWorld {
     return chunk;
   }
 
+  /** Pure function of world coords — used by mob AI to keep mobs walking
+   * along the surface without simulating real gravity/collision for them. */
+  surfaceHeightAt(worldX: number, worldZ: number): number {
+    return this.terrain.surfaceHeightAt(worldX, worldZ);
+  }
+
   async getChunkEdits(cx: number, cz: number): Promise<Record<string, number>> {
     const chunk = await this.ensureChunk(cx, cz);
     return chunk.edits;

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { PROTOCOL_VERSION, type BlockType, type ClientMessage } from "@blockforge/shared";
-import { SessionRegistry, toPlayerInfo, type PlayerSession } from "./state/playerSession.js";
+import { MAX_HEALTH, MAX_HUNGER, SessionRegistry, toPlayerInfo, type PlayerSession } from "./state/playerSession.js";
 import { ServerWorld } from "./state/serverWorld.js";
+import { MobManager } from "./state/mobManager.js";
+import { applyDamage, tickVitals } from "./state/vitals.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 // Must match the client's seed — packages/shared's TerrainGenerator makes
@@ -12,9 +14,14 @@ const WORLD_SEED = 1337;
 // network latency between an input and the playerState update that
 // carries the position used for this check.
 const MAX_EDIT_REACH = 8;
+// Mob AI/vitals don't need real physics tick rates — this is coarse
+// enough to be cheap and still read as smooth once the client
+// interpolates between updates.
+const TICK_INTERVAL_MS = 150;
 
 const sessions = new SessionRegistry();
 const world = new ServerWorld(WORLD_SEED);
+const mobManager = new MobManager((x, z) => world.surfaceHeightAt(x, z));
 
 const wss = new WebSocketServer({ port: PORT });
 
@@ -32,7 +39,16 @@ wss.on("connection", (socket) => {
     if (!session) {
       if (message.type !== "join") return; // must join (nickname) before anything else
       const nickname = message.nickname.trim().slice(0, 24) || "Player";
-      session = { id: randomUUID(), nickname, socket, position: [0, 0, 0], yaw: 0, pitch: 0 };
+      session = {
+        id: randomUUID(),
+        nickname,
+        socket,
+        position: [0, 0, 0],
+        yaw: 0,
+        pitch: 0,
+        health: MAX_HEALTH,
+        hunger: MAX_HUNGER,
+      };
       const joined = session;
       sessions.add(joined);
 
@@ -66,6 +82,14 @@ wss.on("connection", (socket) => {
         void handleRequestChunkEdits(session, message.cx, message.cz);
         break;
       }
+      case "chat": {
+        const text = message.text.trim().slice(0, 200);
+        if (!text) break;
+        // Broadcast to everyone including the sender, same reasoning as
+        // blockUpdate: one code path, provably consistent state.
+        sessions.broadcast({ type: "chat", playerId: session.id, nickname: session.nickname, text });
+        break;
+      }
     }
   });
 
@@ -76,13 +100,7 @@ wss.on("connection", (socket) => {
   });
 });
 
-async function handleBlockEdit(
-  session: PlayerSession,
-  x: number,
-  y: number,
-  z: number,
-  block: BlockType,
-): Promise<void> {
+async function handleBlockEdit(session: PlayerSession, x: number, y: number, z: number, block: BlockType): Promise<void> {
   const dx = x + 0.5 - session.position[0];
   const dy = y + 0.5 - session.position[1];
   const dz = z + 0.5 - session.position[2];
@@ -95,9 +113,6 @@ async function handleBlockEdit(
   }
 
   await world.setBlock(x, y, z, block);
-  // Broadcast to everyone including the sender: applying the same block
-  // twice is a no-op, and this keeps every client's state provably in
-  // sync with the server's rather than trusting the sender's own apply.
   sessions.broadcast({ type: "blockUpdate", x, y, z, block });
 }
 
@@ -105,5 +120,38 @@ async function handleRequestChunkEdits(session: PlayerSession, cx: number, cz: n
   const edits = await world.getChunkEdits(cx, cz);
   sessions.send(session, { type: "chunkEdits", cx, cz, edits });
 }
+
+function respawn(session: PlayerSession): void {
+  session.health = MAX_HEALTH;
+  session.hunger = MAX_HUNGER;
+  const spawnY = world.surfaceHeightAt(0, 0) + 1;
+  session.position = [0.5, spawnY, 0.5];
+  sessions.send(session, { type: "playerRespawn", position: session.position });
+  sessions.broadcast(
+    { type: "playerState", playerId: session.id, position: session.position, yaw: session.yaw, pitch: session.pitch },
+    session.id,
+  );
+}
+
+setInterval(() => {
+  const dt = TICK_INTERVAL_MS / 1000;
+  const active = sessions.all();
+
+  const mobs = mobManager.tick(dt, active);
+  for (const mob of mobs.spawned) sessions.broadcast({ type: "mobSpawned", mob });
+  for (const mob of mobs.states) sessions.broadcast({ type: "mobState", id: mob.id, position: mob.position, yaw: mob.yaw });
+  for (const id of mobs.removed) sessions.broadcast({ type: "mobRemoved", id });
+
+  for (const event of mobs.damage) {
+    const target = active.find((s) => s.id === event.playerId);
+    if (target) applyDamage(target, event.amount);
+  }
+
+  for (const session of active) {
+    tickVitals(session, dt);
+    if (session.health <= 0) respawn(session);
+    sessions.send(session, { type: "playerVitals", health: session.health, hunger: session.hunger });
+  }
+}, TICK_INTERVAL_MS);
 
 console.log(`[server] blockforge server listening on ws://localhost:${PORT}`);
