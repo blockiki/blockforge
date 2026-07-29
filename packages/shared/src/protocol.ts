@@ -1,4 +1,5 @@
 import type { BlockType } from "./blocks.js";
+import type { MobInfo } from "./mob.js";
 
 /**
  * WebSocket message protocol between client and server. Defined here so
@@ -7,7 +8,7 @@ import type { BlockType } from "./blocks.js";
  * principle #1) — every message here exists either to tell the server
  * what a client wants to do, or to tell clients what actually happened.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type Vec3 = readonly [number, number, number];
 
@@ -53,7 +54,17 @@ export interface RequestChunkEditsMessage {
   cz: number;
 }
 
-export type ClientMessage = JoinMessage | PlayerStateMessage | BlockEditMessage | RequestChunkEditsMessage;
+export interface ChatMessage {
+  type: "chat";
+  text: string;
+}
+
+export type ClientMessage =
+  | JoinMessage
+  | PlayerStateMessage
+  | BlockEditMessage
+  | RequestChunkEditsMessage
+  | ChatMessage;
 
 // ---- Server -> Client ----
 
@@ -110,6 +121,47 @@ export interface ChunkEditsMessage {
   edits: Record<string, number>;
 }
 
+export interface ChatBroadcastMessage {
+  type: "chat";
+  playerId: string;
+  nickname: string;
+  text: string;
+}
+
+export interface MobSpawnedMessage {
+  type: "mobSpawned";
+  mob: MobInfo;
+}
+
+/** Sent periodically by the server's tick loop, same interpolation idea
+ * as PlayerStateBroadcastMessage but for mobs. */
+export interface MobStateMessage {
+  type: "mobState";
+  id: string;
+  position: Vec3;
+  yaw: number;
+}
+
+export interface MobRemovedMessage {
+  type: "mobRemoved";
+  id: string;
+}
+
+/** Sent only to the owning player — health/hunger are private state, no
+ * one else needs them. */
+export interface PlayerVitalsMessage {
+  type: "playerVitals";
+  health: number;
+  hunger: number;
+}
+
+/** Sent to the owning player when health hits 0, so their client can
+ * snap the camera back to the respawn point. */
+export interface PlayerRespawnMessage {
+  type: "playerRespawn";
+  position: Vec3;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | PlayerJoinedMessage
@@ -117,4 +169,10 @@ export type ServerMessage =
   | PlayerStateBroadcastMessage
   | BlockUpdateMessage
   | BlockEditRejectedMessage
-  | ChunkEditsMessage;
+  | ChunkEditsMessage
+  | ChatBroadcastMessage
+  | MobSpawnedMessage
+  | MobStateMessage
+  | MobRemovedMessage
+  | PlayerVitalsMessage
+  | PlayerRespawnMessage;
