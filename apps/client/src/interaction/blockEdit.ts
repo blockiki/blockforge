@@ -25,6 +25,9 @@ export class BlockEditor {
     /** Applies the edit locally (prediction) and sends it to the server;
      * injected so this module doesn't need to know about networking. */
     private readonly onEdit: (x: number, y: number, z: number, block: BlockType) => void,
+    /** Called with whatever block was just broken, so the caller can add
+     * it to the player's inventory. */
+    private readonly onBreak: (block: BlockType) => void,
   ) {
     const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.002, 1.002, 1.002));
     this.highlight = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
@@ -58,6 +61,7 @@ export class BlockEditor {
 
     if (e.button === 0) {
       const { x, y, z } = this.currentHit.block;
+      this.onBreak(this.world.getBlock(x, y, z));
       this.onEdit(x, y, z, BlockType.Air);
     } else if (e.button === 2) {
       const selected = this.getSelectedBlock();

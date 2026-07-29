@@ -12,6 +12,7 @@ const TILE_ORDER: readonly BlockType[] = [
   BlockType.Wood,
   BlockType.Sand,
   BlockType.Snow,
+  BlockType.Planks,
 ];
 
 export interface TileUV {
@@ -39,6 +40,16 @@ function drawTile(ctx: CanvasRenderingContext2D, tileX: number, block: BlockType
     ctx.fillStyle = shade(base, -35);
     for (let x = tileX + 1; x < tileX + TILE_SIZE; x += 3) {
       ctx.fillRect(x, 0, 1, TILE_SIZE);
+    }
+    return;
+  }
+
+  if (block === BlockType.Planks) {
+    // Horizontal seams instead of Wood's vertical grain, so cut boards
+    // read as distinct from the raw log at a glance.
+    ctx.fillStyle = shade(base, -35);
+    for (let y = 1; y < TILE_SIZE; y += 4) {
+      ctx.fillRect(tileX, y, TILE_SIZE, 1);
     }
     return;
   }
