@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { type BlockType, CHUNK_SIZE_X, CHUNK_SIZE_Z, isSolidBlock } from "@blockforge/shared";
-import type { Chunk } from "./chunk";
+import { type BlockType, type ChunkData, CHUNK_SIZE_X, CHUNK_SIZE_Z, isSolidBlock } from "@blockforge/shared";
 import type { World } from "./world";
 import type { TileUV } from "./textureAtlas";
 
@@ -38,7 +37,7 @@ const CORNER_UVS: readonly (readonly [number, number])[] = [[0, 0], [1, 0], [1, 
 export class ChunkMesher {
   constructor(private readonly getTileUV: (block: BlockType) => TileUV) {}
 
-  build(chunk: Chunk, world: World): THREE.BufferGeometry | null {
+  build(chunk: ChunkData, world: World): THREE.BufferGeometry | null {
     const positions: number[] = [];
     const normals: number[] = [];
     const colors: number[] = [];
