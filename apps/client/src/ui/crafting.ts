@@ -28,10 +28,13 @@ export class CraftingUI {
   constructor(
     private readonly inventory: Inventory,
     private readonly onOpenChange: (open: boolean) => void,
+    /** Checked before toggling open on E, so it doesn't pop up behind
+     * the help modal while that's showing. */
+    private readonly canOpen: () => boolean = () => true,
   ) {
     this.panel = document.createElement("div");
     this.panel.style.cssText = `
-      position:fixed;right:16px;top:16px;width:280px;padding:12px;
+      position:fixed;right:16px;top:72px;width:280px;padding:12px;
       background:rgba(0,0,0,0.7);color:#fff;font-family:sans-serif;
       font-size:14px;border-radius:6px;display:none;z-index:15;
     `;
@@ -52,6 +55,7 @@ export class CraftingUI {
 
     document.addEventListener("keydown", (e) => {
       if (e.code === "KeyE") {
+        if (!this.open && !this.canOpen()) return;
         e.preventDefault();
         this.toggle();
         return;

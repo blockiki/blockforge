@@ -13,6 +13,7 @@ import { Inventory } from "./inventory/inventory";
 import { VitalsHud } from "./ui/vitalsHud";
 import { ChatUI } from "./ui/chat";
 import { CraftingUI } from "./ui/crafting";
+import { HelpModal } from "./ui/helpModal";
 
 const WS_URL = `ws://${location.hostname}:8090`;
 // Chunks within this radius of spawn load synchronously so the player
@@ -76,18 +77,27 @@ async function main(): Promise<void> {
   const hotbar = new Hotbar(inventory);
   const vitalsHud = new VitalsHud();
 
-  // Chat and crafting both grab the keyboard while open, so movement and
-  // the local player's periodic position updates pause until they close.
+  // Chat, crafting, and the help modal all grab the keyboard while open,
+  // so movement and the local player's periodic position updates pause
+  // until they close. Only one of the three can be open at a time — each
+  // checks the others via canOpen before taking over Enter/E.
   let inputBlocked = false;
-  const craftingUI = new CraftingUI(inventory, (open) => {
+  const helpModal = new HelpModal((open) => {
     inputBlocked = open;
   });
+  const craftingUI = new CraftingUI(
+    inventory,
+    (open) => {
+      inputBlocked = open;
+    },
+    () => !helpModal.isOpen(),
+  );
   const chatUI = new ChatUI(
     (text) => connection.send({ type: "chat", text }),
     (open) => {
       inputBlocked = open;
     },
-    () => !craftingUI.isOpen(),
+    () => !craftingUI.isOpen() && !helpModal.isOpen(),
   );
 
   const blockEditor = new BlockEditor(
@@ -158,7 +168,7 @@ async function main(): Promise<void> {
 
   const overlay = document.createElement("div");
   overlay.textContent =
-    "클릭하여 시작 — WASD 이동, 마우스 시점, 스페이스 점프, 좌클릭 파괴, 우클릭 설치, E 제작, Enter 채팅";
+    "클릭하여 시작 — WASD 이동, 마우스 시점, 스페이스 점프, 좌클릭 파괴, 우클릭 설치, E 제작, Enter 채팅 (오른쪽 위 ? 버튼에서 자세한 사용법 보기)";
   overlay.style.cssText = `
     position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     color:#fff;background:rgba(0,0,0,0.55);font-family:sans-serif;font-size:20px;
