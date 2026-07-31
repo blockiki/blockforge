@@ -1,6 +1,9 @@
 import type { WebSocket } from "ws";
 import type { PlayerInfo, ServerMessage } from "@blockforge/shared";
 
+export const MAX_HEALTH = 100;
+export const MAX_HUNGER = 100;
+
 export interface PlayerSession {
   id: string;
   nickname: string;
@@ -8,6 +11,8 @@ export interface PlayerSession {
   position: readonly [number, number, number];
   yaw: number;
   pitch: number;
+  health: number;
+  hunger: number;
 }
 
 export function toPlayerInfo(session: PlayerSession): PlayerInfo {

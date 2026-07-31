@@ -10,6 +10,18 @@ const DETAIL_AMPLITUDE = 4;
 const SURFACE_LAYER_DEPTH = 3; // blocks of dirt beneath the top block
 const CAVE_THRESHOLD = 0.62; // higher = rarer caves
 const SNOW_LINE = 64; // surface at/above this height caps with snow
+const TREE_CHANCE = 0.01; // fraction of eligible grass columns that grow a trunk
+const TREE_HEIGHT = 4;
+
+/** Deterministic per-column pseudo-random value in [0, 1), independent of
+ * the noise fields — used only to decide tree placement, so it doesn't
+ * need its own seeded noise generator instance. */
+function hash01(x: number, z: number, seed: number): number {
+  let h = (x * 374761393 + z * 668265263 + seed * 69069) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
 
 /** Deterministic PRNG from a numeric seed, used to seed the noise functions. */
 function mulberry32(seed: number): () => number {
@@ -34,7 +46,7 @@ export class TerrainGenerator {
   private readonly detailNoise: NoiseFunction2D;
   private readonly caveNoise: NoiseFunction3D;
 
-  constructor(seed: number) {
+  constructor(private readonly seed: number) {
     const rng = mulberry32(seed);
     this.heightNoise = createNoise2D(rng);
     this.detailNoise = createNoise2D(rng);
@@ -73,6 +85,19 @@ export class TerrainGenerator {
           }
 
           chunk.setBlock(x, y, z, block);
+        }
+
+        // Bare trunks only (no canopy/Leaves block yet) — enough to make
+        // Wood an actual gatherable resource for crafting, without
+        // introducing another block type just for foliage.
+        if (
+          topBlock === BlockType.Grass &&
+          surfaceY + TREE_HEIGHT < CHUNK_SIZE_Y - 1 &&
+          hash01(worldX, worldZ, this.seed) < TREE_CHANCE
+        ) {
+          for (let ty = 1; ty <= TREE_HEIGHT; ty++) {
+            chunk.setBlock(x, surfaceY + ty, z, BlockType.Wood);
+          }
         }
       }
     }
